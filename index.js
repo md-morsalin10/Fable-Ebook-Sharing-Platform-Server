@@ -10,7 +10,7 @@ const port = process.env.PORT || 5000;
 app.use(cors())
 app.use(express.json())
 
-const uri =process.env.MONGO_URI;
+const uri = process.env.MONGO_URI;
 
 app.get('/', (req, res) => {
   res.send('Hello World! Me');
@@ -31,13 +31,34 @@ async function run() {
     await client.connect();
 
     const database = client.db("Fable");
- 
-    app.get("/api/users", async(req,res)=>{
-        const cursor = usersCollection.find().skip(7)
-        const users = await cursor.toArray();
-        res.send(users)
+    const bookCollection = database.collection("books")
+
+    app.post("/api/books", async (req, res) => {
+      const book = req.body;
+      const newBook = {
+        ...book,
+        createdAt: new Date(),
+      }
+      const result = await bookCollection.insertOne(newBook)
+      res.send(result)
     })
- 
+
+    app.get("/api/books/:id", async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) }
+      const book = await bookCollection.findOne(query)
+      res.send(book)
+    })
+
+    app.get("/api/books", async (req, res) => {
+      const query = {};
+      if (req.query.writerId) {
+        query.writerId = req.query.writerId
+      }
+      const books = await bookCollection.find(query).toArray()
+      res.send(books)
+    })
+
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
     console.log("Pinged your deployment. You successfully connected to MongoDB!");

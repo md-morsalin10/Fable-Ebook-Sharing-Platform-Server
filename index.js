@@ -32,6 +32,38 @@ async function run() {
 
     const database = client.db("Fable");
     const bookCollection = database.collection("books")
+    const writersSubscriptionCollection = database.collection("writersSubscriptions")
+    const usersCollection = database.collection("user")
+
+    app.post("/api/subscription", async (req, res) => {
+      // 🔍 ১. চেক করুন ফ্রন্টএন্ড থেকে আদৌ কোনো বডি বা ডেটা আসছে কিনা
+      console.log("--- FRONTEND RECEIVED BODY ---", req.body);
+
+      const { sessionId, writerId, priceId, writerName,writerEmail } = req.body;
+      const isExist = await writersSubscriptionCollection.findOne({sessionId})
+      if (isExist) {
+        res.send({ message: "subscription already exist" })
+        return
+      }
+
+      const result = await writersSubscriptionCollection.insertOne({
+        sessionId,
+        writerId,
+        priceId,
+        writerName,
+        writerEmail
+      });
+
+      const updateResult = await usersCollection.updateOne(
+        { _id: new ObjectId(writerId) },
+        { $set: { plan: "pro" } }
+      );
+
+      console.log("--- MONGODB USER UPDATE RESULT ---", updateResult);
+
+      res.send({ message: "subscription created", result });
+    });
+
 
     app.post("/api/books", async (req, res) => {
       const book = req.body;

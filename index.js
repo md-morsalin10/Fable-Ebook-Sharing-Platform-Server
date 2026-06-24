@@ -38,7 +38,14 @@ async function run() {
     const bookmarkCollection = database.collection("bookmark");
 
 
-    // 🔖 BOOKMARK TOGGLE API (Add if not exists, Remove if exists)
+    app.get("/api/bookmarks", async (req, res) => {
+      const { userId } = req.query;
+      const query = { userId };
+      const bookmarks = await bookmarkCollection.find(query).toArray();
+      res.send(bookmarks);
+
+    });
+
     app.post("/api/bookmarks/toggle", async (req, res) => {
       try {
         const { userId, bookId, title, coverImage, price, genre, writerName } = req.body;

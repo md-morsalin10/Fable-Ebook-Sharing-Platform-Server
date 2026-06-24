@@ -35,6 +35,38 @@ async function run() {
     const writersSubscriptionCollection = database.collection("writersSubscriptions")
     const usersCollection = database.collection("user");
     const readerPaymentCollection = database.collection("readerPayment");
+    const bookmarkCollection = database.collection("bookmark");
+
+
+    // 🔖 BOOKMARK TOGGLE API (Add if not exists, Remove if exists)
+    app.post("/api/bookmarks/toggle", async (req, res) => {
+      try {
+        const { userId, bookId, title, coverImage, price, genre, writerName } = req.body;
+
+        const isExist = await bookmarkCollection.findOne({ userId, bookId });
+
+        if (isExist) {
+          await bookmarkCollection.deleteOne({ userId, bookId });
+          return res.send({ message: "Bookmark removed", isBookmarked: false });
+        } else {
+
+          const result = await bookmarkCollection.insertOne({
+            userId,
+            bookId,
+            title,
+            coverImage,
+            price,
+            genre,
+            writerName,
+            createdAt: new Date()
+          });
+          return res.send({ message: "Bookmark added", isBookmarked: true, result });
+        }
+      } catch (error) {
+        console.error("Bookmark Error:", error);
+        res.status(500).send({ message: "Internal server error" });
+      }
+    });
 
     app.post("/api/subscription", async (req, res) => {
       const { sessionId, writerId, priceId, writerName, writerEmail } = req.body;
@@ -57,43 +89,6 @@ async function run() {
       res.send({ message: "subscription created", result });
     });
 
-    // app.post("/api/payment", async (req, res) => {
-
-    //   const { sessionId, writerId, price, writerName, writerEmail, title, bookId, userName, userEmail, userId, coverImage } = req.body;
-    //   const isExist = await readerPaymentCollection.findOne({ sessionId })
-    //   if (isExist) {
-    //     res.send({ message: "subscription already exist" })
-    //     return
-    //   }
-    //   const result = await readerPaymentCollection.insertOne({
-    //     sessionId,
-    //     writerId,
-    //     price,
-    //     writerName,
-    //     writerEmail,
-    //     title,
-    //     bookId,
-    //     userName,
-    //     userEmail,
-    //     userId,
-    //     coverImage
-    //   });
-
-    //   const updateResult = await bookCollection.updateOne(
-    //     { _id: new ObjectId(bookId) },
-    //     {
-    //       $set: {
-    //         status: "sold",
-    //       }
-    //     }
-    //   );
-
-    //   console.log("--- MONGODB USER UPDATE RESULT ---", updateResult);
-
-    //   res.send({ message: "subscription created", result });
-    // });
-
-
     app.get("/api/payment", async (req, res) => {
       const query = {};
       if (req.query.userId) {
@@ -102,6 +97,11 @@ async function run() {
       if (req.query.userEmail) {
         query.userEmail = req.query.userEmail
       }
+
+      if (req.query.writerId) {
+        query.writerId = req.query.writerId
+      }
+
       const userPayment = await readerPaymentCollection.find(query).toArray()
       res.send(userPayment)
     })
@@ -116,8 +116,18 @@ async function run() {
       }
 
       const result = await readerPaymentCollection.insertOne({
-        sessionId, writerId, price, writerName, writerEmail,
-        title, bookId, userName, userEmail, userId, coverImage
+        sessionId,
+        writerId,
+        price,
+        writerName,
+        writerEmail,
+        title,
+        bookId,
+        userName,
+        userEmail,
+        userId,
+        coverImage,
+        purchaseDate: new Date()
       });
 
       const updateResult = await bookCollection.updateOne(
@@ -126,7 +136,8 @@ async function run() {
           $set: {
             status: "sold",
             buyerEmail: userEmail,
-            buyerId: userId
+            buyerId: userId,
+            buyerName: userName
           }
         }
       );

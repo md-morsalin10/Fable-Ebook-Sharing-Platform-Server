@@ -93,6 +93,19 @@ async function run() {
     //   res.send({ message: "subscription created", result });
     // });
 
+
+    app.get("/api/payment", async (req, res) => {
+      const query = {};
+      if (req.query.userId) {
+        query.userId = req.query.userId
+      }
+      if (req.query.userEmail) {
+        query.userEmail = req.query.userEmail
+      }
+      const userPayment = await readerPaymentCollection.find(query).toArray()
+      res.send(userPayment)
+    })
+
     app.post("/api/payment", async (req, res) => {
       const { sessionId, writerId, price, writerName, writerEmail, title, bookId, userName, userEmail, userId, coverImage } = req.body;
 
@@ -113,7 +126,7 @@ async function run() {
           $set: {
             status: "sold",
             buyerEmail: userEmail,
-            buyerId: userId       
+            buyerId: userId
           }
         }
       );
@@ -135,7 +148,7 @@ async function run() {
 
     app.get("/api/books/:id", async (req, res) => {
       const id = req.params.id;
-      const { userEmail } = req.query; 
+      const { userEmail } = req.query;
 
       const query = { _id: new ObjectId(id) }
       const book = await bookCollection.findOne(query)
@@ -144,18 +157,14 @@ async function run() {
         return res.status(404).send({ message: "Book not found" });
       }
 
-      // 🎯 সিকিউরিটি চেক:
       const isWriter = userEmail && userEmail === book.writerEmail;
       const isBuyer = userEmail && userEmail === book.buyerEmail;
       const isSold = book.status?.toLowerCase() === 'sold';
 
-      // বইটি যদি বিক্রি হয়ে গিয়ে থাকে এবং কারেন্ট ভিজিটর যদি লেখক বা ক্রেতা কোনোটিই না হয়
       if (isSold && !isWriter && !isBuyer) {
-        // 🔒 ফুল কন্টেন্ট ডাটাবেজ থেকে ফ্রন্টএন্ডে পাঠাবোই না (১০০% সিকিউর)
         if (book.fullContent) {
           delete book.fullContent;
         }
-        // আপনি চাইলে মেইন ডেসক্রিপশনও এখানে হাইড বা ট্রাঙ্কেট করে দিতে পারেন
       }
 
       res.send(book);

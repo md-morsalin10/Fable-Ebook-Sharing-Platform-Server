@@ -33,19 +33,16 @@ async function run() {
     const database = client.db("Fable");
     const bookCollection = database.collection("books")
     const writersSubscriptionCollection = database.collection("writersSubscriptions")
-    const usersCollection = database.collection("user")
+    const usersCollection = database.collection("user");
+    const readerPaymentCollection = database.collection("readerPayment");
 
     app.post("/api/subscription", async (req, res) => {
-      // 🔍 ১. চেক করুন ফ্রন্টএন্ড থেকে আদৌ কোনো বডি বা ডেটা আসছে কিনা
-      console.log("--- FRONTEND RECEIVED BODY ---", req.body);
-
-      const { sessionId, writerId, priceId, writerName,writerEmail } = req.body;
-      const isExist = await writersSubscriptionCollection.findOne({sessionId})
+      const { sessionId, writerId, priceId, writerName, writerEmail } = req.body;
+      const isExist = await writersSubscriptionCollection.findOne({ sessionId })
       if (isExist) {
         res.send({ message: "subscription already exist" })
         return
       }
-
       const result = await writersSubscriptionCollection.insertOne({
         sessionId,
         writerId,
@@ -53,17 +50,77 @@ async function run() {
         writerName,
         writerEmail
       });
-
       const updateResult = await usersCollection.updateOne(
         { _id: new ObjectId(writerId) },
         { $set: { plan: "pro" } }
       );
-
-      console.log("--- MONGODB USER UPDATE RESULT ---", updateResult);
-
       res.send({ message: "subscription created", result });
     });
 
+    // app.post("/api/payment", async (req, res) => {
+
+    //   const { sessionId, writerId, price, writerName, writerEmail, title, bookId, userName, userEmail, userId, coverImage } = req.body;
+    //   const isExist = await readerPaymentCollection.findOne({ sessionId })
+    //   if (isExist) {
+    //     res.send({ message: "subscription already exist" })
+    //     return
+    //   }
+    //   const result = await readerPaymentCollection.insertOne({
+    //     sessionId,
+    //     writerId,
+    //     price,
+    //     writerName,
+    //     writerEmail,
+    //     title,
+    //     bookId,
+    //     userName,
+    //     userEmail,
+    //     userId,
+    //     coverImage
+    //   });
+
+    //   const updateResult = await bookCollection.updateOne(
+    //     { _id: new ObjectId(bookId) },
+    //     {
+    //       $set: {
+    //         status: "sold",
+    //       }
+    //     }
+    //   );
+
+    //   console.log("--- MONGODB USER UPDATE RESULT ---", updateResult);
+
+    //   res.send({ message: "subscription created", result });
+    // });
+
+    app.post("/api/payment", async (req, res) => {
+      const { sessionId, writerId, price, writerName, writerEmail, title, bookId, userName, userEmail, userId, coverImage } = req.body;
+
+      const isExist = await readerPaymentCollection.findOne({ sessionId })
+      if (isExist) {
+        res.send({ message: "subscription already exist" })
+        return
+      }
+
+      const result = await readerPaymentCollection.insertOne({
+        sessionId, writerId, price, writerName, writerEmail,
+        title, bookId, userName, userEmail, userId, coverImage
+      });
+
+      const updateResult = await bookCollection.updateOne(
+        { _id: new ObjectId(bookId) },
+        {
+          $set: {
+            status: "sold",
+            buyerEmail: userEmail,
+            buyerId: userId       
+          }
+        }
+      );
+
+      console.log("--- MONGODB USER UPDATE RESULT ---", updateResult);
+      res.send({ message: "subscription created", result });
+    });
 
     app.post("/api/books", async (req, res) => {
       const book = req.body;
@@ -75,12 +132,42 @@ async function run() {
       res.send(result)
     })
 
+
     app.get("/api/books/:id", async (req, res) => {
       const id = req.params.id;
+      const { userEmail } = req.query; 
+
       const query = { _id: new ObjectId(id) }
       const book = await bookCollection.findOne(query)
-      res.send(book)
-    })
+
+      if (!book) {
+        return res.status(404).send({ message: "Book not found" });
+      }
+
+      // 🎯 সিকিউরিটি চেক:
+      const isWriter = userEmail && userEmail === book.writerEmail;
+      const isBuyer = userEmail && userEmail === book.buyerEmail;
+      const isSold = book.status?.toLowerCase() === 'sold';
+
+      // বইটি যদি বিক্রি হয়ে গিয়ে থাকে এবং কারেন্ট ভিজিটর যদি লেখক বা ক্রেতা কোনোটিই না হয়
+      if (isSold && !isWriter && !isBuyer) {
+        // 🔒 ফুল কন্টেন্ট ডাটাবেজ থেকে ফ্রন্টএন্ডে পাঠাবোই না (১০০% সিকিউর)
+        if (book.fullContent) {
+          delete book.fullContent;
+        }
+        // আপনি চাইলে মেইন ডেসক্রিপশনও এখানে হাইড বা ট্রাঙ্কেট করে দিতে পারেন
+      }
+
+      res.send(book);
+    });
+
+    // app.get("/api/books/:id", async (req, res) => {
+    //   const id = req.params.id;
+    //   const query = { _id: new ObjectId(id) }
+
+    //   const book = await bookCollection.findOne(query)
+    //   res.send(book)
+    // })
 
     app.get("/api/books", async (req, res) => {
       const query = {};

@@ -188,6 +188,84 @@ async function run() {
       res.send(book);
     });
 
+  //  for update 
+    // 📝 বইয়ের বিস্তারিত তথ্য আপডেট করার নতুন API রুট
+    app.patch("/api/books/update/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const { title, description, genre, price, coverImage } = req.body;
+
+        const query = { _id: new ObjectId(id) };
+
+        // ডাটাবেজে আপডেট করার অবজেক্ট তৈরি
+        const updateDoc = {
+          $set: {
+            title,
+            description,
+            genre,
+            price: parseFloat(price), // প্রাইজ যেন নম্বর বা ফ্লোট হিসেবে সেভ হয়
+            coverImage,
+            updatedAt: new Date() // কখন আপডেট হলো তার ট্র্যাকিং রাখা
+          }
+        };
+
+        const result = await bookCollection.updateOne(query, updateDoc);
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ success: false, message: "Ebook not found" });
+        }
+
+        res.send({ success: true, message: "Ebook updated successfully!", result });
+      } catch (error) {
+        console.error("Update Ebook Error:", error);
+        res.status(500).send({ success: false, message: "Internal server error" });
+      }
+    });
+
+    // publish or unpublish book
+    app.patch("/api/books/toggle-publish/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const { isPublished } = req.body;
+
+        const query = { _id: new ObjectId(id) };
+        const updateDoc = {
+          $set: {
+            isPublished: isPublished
+          }
+        };
+
+        const result = await bookCollection.updateOne(query, updateDoc);
+
+        if (result.modifiedCount === 0) {
+          return res.status(404).send({ message: "Book not found or no changes made" });
+        }
+
+        res.send({ success: true, message: `Book status updated to ${isPublished ? 'Published' : 'Unpublished'}` });
+      } catch (error) {
+        console.error("Toggle Publish Error:", error);
+        res.status(500).send({ message: "Internal server error" });
+      }
+    });
+
+    // 🗑️ বই ডিলিট করার নতুন API রুট
+    app.delete("/api/books/delete/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) };
+
+        const result = await bookCollection.deleteOne(query);
+
+        if (result.deletedCount === 0) {
+          return res.status(404).send({ success: false, message: "Ebook not found or already deleted" });
+        }
+
+        res.send({ success: true, message: "Ebook deleted successfully!", result });
+      } catch (error) {
+        console.error("Delete Ebook Error:", error);
+        res.status(500).send({ success: false, message: "Internal server error" });
+      }
+    });
     // app.get("/api/books/:id", async (req, res) => {
     //   const id = req.params.id;
     //   const query = { _id: new ObjectId(id) }

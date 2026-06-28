@@ -55,22 +55,33 @@ const verifyToken = async (req, res, next) => {
 
 }
 
+
 const writerVerify = async (req, res, next) => {
   const user = req.user;
-  if (user.role !== "writer" || user.plan !== "pro") {
-    return res.status(401).send({ message: "You are not authorized to access this route" });
-  }
-  console.log(user, "user from writerVerify");
-  next();
-}
-
-const adminVerify = async (req, res, next) => {
-  const user = req.user;
-  if (user.role !== "admin") {
-    return res.status(403).send({ message: "Forbidden access. Admin only!" });
+  if (!user || user.role !== "writer" || user.plan !== "pro") {
+    return res.status(403).send({ message: "You are not authorized to access this route" });
   }
   next();
 };
+
+
+
+const authorizeRoles = (...allowedRoles) => {
+  return (req, res, next) => {
+    const user = req.user;
+
+    if (!user) {
+      return res.status(401).send({ message: "Unauthorized access" });
+    }
+
+    if (!allowedRoles.includes(user.role)) {
+      return res.status(403).send({ message: "You do not have permission to access this resource" });
+    }
+
+    next();
+  };
+};
+
 
 async function run() {
   try {
@@ -84,7 +95,7 @@ async function run() {
     const bookmarkCollection = database.collection("bookmark");
 
 
-    app.get("/api/bookmarks", verifyToken, async (req, res) => {
+    app.get("/api/bookmarks",verifyToken, authorizeRoles("writer", "reader"), async (req, res) => {
       const { userId } = req.query;
       const query = { userId };
       const bookmarks = await bookmarkCollection.find(query).toArray();
@@ -98,12 +109,12 @@ async function run() {
       res.send(books);
     })
 
-    app.get("/api/users", async (req, res) => {
+    app.get("/api/users",verifyToken, authorizeRoles("admin"), async (req, res) => {
       const result = await usersCollection.find().sort({ createdAt: -1 }).toArray();
       res.send(result);
     });
 
-    app.post("/api/bookmarks/toggle", async (req, res) => {
+    app.post("/api/bookmarks/toggle",verifyToken, authorizeRoles("writer", "reader"), async (req, res) => {
       try {
         const { userId, bookId, title, coverImage, price, genre, writerName } = req.body;
 
@@ -132,7 +143,7 @@ async function run() {
       }
     });
 
-    app.get("/api/writers/fee", async (req, res) => {
+    app.get("/api/writers/fee",verifyToken, authorizeRoles("admin"), async (req, res) => {
       const query = {};
       const fee = await writersSubscriptionCollection.find(query).toArray();
       res.send(fee);
@@ -152,7 +163,7 @@ async function run() {
         writerId,
         priceId,
         writerName,
-        price: Number(metadata.price || 19.99),
+        price: Number(price || 19.99),
         writerEmail
       });
       const updateResult = await usersCollection.updateOne(
@@ -162,7 +173,7 @@ async function run() {
       res.send({ message: "subscription created", result });
     });
 
-    app.get("/api/payment",verifyToken, writerVerify,  async (req, res) => {
+    app.get("/api/payment", verifyToken, authorizeRoles("writer", "reader", "admin"), async (req, res) => {
       const query = {};
       if (req.query.userId) {
         query.userId = req.query.userId
@@ -219,7 +230,7 @@ async function run() {
       res.send({ message: "subscription created", result });
     });
 
-    app.post("/api/books",verifyToken, writerVerify,  async (req, res) => {
+    app.post("/api/books", verifyToken, writerVerify, async (req, res) => {
       const book = req.body;
       const newBook = {
         ...book,
@@ -233,7 +244,7 @@ async function run() {
 
 
 
-    app.get("/api/books",verifyToken, writerVerify,  async (req, res) => {
+    app.get("/api/books", async (req, res) => {
       const query = {};
 
       if (req.query.writerId) {
@@ -247,7 +258,7 @@ async function run() {
     });
 
 
-    app.get("/api/books/:id", async (req, res) => {
+    app.get("/api/books/:id", verifyToken, async (req, res) => {
       const id = req.params.id;
       const { userEmail } = req.query;
 
@@ -279,22 +290,22 @@ async function run() {
 
 
     //  for book update 
-    app.patch("/api/books/update/:id",verifyToken, writerVerify,  async (req, res) => {
+    app.patch("/api/books/update/:id", verifyToken, writerVerify, async (req, res) => {
       try {
         const id = req.params.id;
         const { title, description, genre, price, coverImage } = req.body;
 
         const query = { _id: new ObjectId(id) };
 
-        
+
         const updateDoc = {
           $set: {
             title,
             description,
             genre,
-            price: parseFloat(price), 
+            price: parseFloat(price),
             coverImage,
-            updatedAt: new Date() 
+            updatedAt: new Date()
           }
         };
 
@@ -312,7 +323,7 @@ async function run() {
     });
 
     // publish or unpublish book (Updated to match Frontend)
-    app.patch("/api/books/status/:id",  async (req, res) => {
+    app.patch("/api/books/status/:id", verifyToken, writerVerify, async (req, res) => {
       try {
         const id = req.params.id;
         const { status } = req.body;
@@ -339,7 +350,7 @@ async function run() {
 
 
     // delete books
-    app.delete("/api/books/delete/:id", async (req, res) => {
+    app.delete("/api/books/delete/:id", verifyToken, writerVerify, async (req, res) => {
       try {
         const id = req.params.id;
         const query = { _id: new ObjectId(id) };
@@ -378,11 +389,8 @@ async function run() {
 
 
 
-
-
-
     // user delete 
-    app.delete("/api/admin/users/:id", async (req, res) => {
+    app.delete("/api/admin/users/:id",verifyToken, authorizeRoles("admin"), async (req, res) => {
       try {
         const id = req.params.id;
         const query = { _id: new ObjectId(id) };
@@ -400,7 +408,7 @@ async function run() {
       }
     });
 
-    app.patch("/api/admin/users/role/:id", async (req, res) => {
+    app.patch("/api/admin/users/role/:id",verifyToken, authorizeRoles("admin"), async (req, res) => {
       try {
         const id = req.params.id;
         const { role } = req.body;
@@ -442,7 +450,7 @@ async function run() {
     // publish or unpublish book (Updated to match Frontend)
 
 
-    app.patch("/api/admin/books/status/:id", async (req, res) => {
+    app.patch("/api/admin/books/status/:id",verifyToken, authorizeRoles("admin"), async (req, res) => {
       try {
         const id = req.params.id;
         const { status } = req.body;
@@ -469,7 +477,7 @@ async function run() {
 
 
 
-    app.get("/api/admin/analytics", async (req, res) => {
+    app.get("/api/admin/analytics",verifyToken, authorizeRoles("admin"), async (req, res) => {
       try {
 
         const totalUsers = await usersCollection.countDocuments({ role: "user" });

@@ -4,6 +4,7 @@ const cors = require("cors")
 const dotenv = require("dotenv")
 dotenv.config()
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
+const { createRemoteJWKSet, jwtVerify } = require('jose-cjs');
 const port = process.env.PORT || 5000;
 
 
@@ -25,11 +26,56 @@ const client = new MongoClient(uri, {
   }
 });
 
+// const verifyToken = async (req, res, next) =>{
+//   console.log("headers", req.headers)
+//   next()
+// }
+
+const JWKS = createRemoteJWKSet(new URL(`${process.env.CLIENT_URL}/api/auth/jwks`));
+
+const verifyToken = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  // console.log(authHeader, "authHeader");
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).send({ message: 'Missing or invalid authorization header' });
+  }
+  const token = authHeader.split(' ')[1];
+  // console.log(token, "token");
+  try {
+    const { payload } = await jwtVerify(token, JWKS);
+    req.user = payload;
+    // console.log(payload, "payload");
+    next();
+
+
+  } catch (err) {
+    // console.log(err, "err");
+    res.status(401).send({ message: 'Invalid token' });
+  }
+
+}
+
+const writerVerify = async (req, res, next) => {
+  const user = req.user;
+  if (user.role !== "writer" || user.plan !== "pro") {
+    return res.status(401).send({ message: "You are not authorized to access this route" });
+  }
+  console.log(user, "user from writerVerify");
+  next();
+}
+
+const adminVerify = async (req, res, next) => {
+  const user = req.user;
+  if (user.role !== "admin") {
+    return res.status(403).send({ message: "Forbidden access. Admin only!" });
+  }
+  next();
+};
+
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
     await client.connect();
-
     const database = client.db("Fable");
     const bookCollection = database.collection("books")
     const writersSubscriptionCollection = database.collection("writersSubscriptions")
@@ -38,12 +84,23 @@ async function run() {
     const bookmarkCollection = database.collection("bookmark");
 
 
-    app.get("/api/bookmarks", async (req, res) => {
+    app.get("/api/bookmarks", verifyToken, async (req, res) => {
       const { userId } = req.query;
       const query = { userId };
       const bookmarks = await bookmarkCollection.find(query).toArray();
       res.send(bookmarks);
 
+    });
+
+    app.get("/api/features/books", async (req, res) => {
+      const query = {};
+      const books = await bookCollection.find(query).limit(6).sort({ createdAt: -1 }).toArray();
+      res.send(books);
+    })
+
+    app.get("/api/users", async (req, res) => {
+      const result = await usersCollection.find().sort({ createdAt: -1 }).toArray();
+      res.send(result);
     });
 
     app.post("/api/bookmarks/toggle", async (req, res) => {
@@ -75,6 +132,14 @@ async function run() {
       }
     });
 
+    app.get("/api/writers/fee", async (req, res) => {
+      const query = {};
+      const fee = await writersSubscriptionCollection.find(query).toArray();
+      res.send(fee);
+    });
+
+
+
     app.post("/api/subscription", async (req, res) => {
       const { sessionId, writerId, priceId, writerName, writerEmail } = req.body;
       const isExist = await writersSubscriptionCollection.findOne({ sessionId })
@@ -87,6 +152,7 @@ async function run() {
         writerId,
         priceId,
         writerName,
+        price: Number(metadata.price || 19.99),
         writerEmail
       });
       const updateResult = await usersCollection.updateOne(
@@ -96,7 +162,7 @@ async function run() {
       res.send({ message: "subscription created", result });
     });
 
-    app.get("/api/payment", async (req, res) => {
+    app.get("/api/payment",verifyToken, writerVerify,  async (req, res) => {
       const query = {};
       if (req.query.userId) {
         query.userId = req.query.userId
@@ -153,29 +219,52 @@ async function run() {
       res.send({ message: "subscription created", result });
     });
 
-    app.post("/api/books", async (req, res) => {
+    app.post("/api/books",verifyToken, writerVerify,  async (req, res) => {
       const book = req.body;
       const newBook = {
         ...book,
         createdAt: new Date(),
+        status: book.status || "unpublished",
       }
       const result = await bookCollection.insertOne(newBook)
       res.send(result)
     })
 
 
+
+
+    app.get("/api/books",verifyToken, writerVerify,  async (req, res) => {
+      const query = {};
+
+      if (req.query.writerId) {
+        query.writerId = req.query.writerId;
+      } else {
+        query.status = { $in: ["published", "sold"] };
+      }
+
+      const books = await bookCollection.find(query).toArray();
+      res.send(books);
+    });
+
+
     app.get("/api/books/:id", async (req, res) => {
       const id = req.params.id;
       const { userEmail } = req.query;
 
-      const query = { _id: new ObjectId(id) }
-      const book = await bookCollection.findOne(query)
+      const query = { _id: new ObjectId(id) };
+      const book = await bookCollection.findOne(query);
 
       if (!book) {
         return res.status(404).send({ message: "Book not found" });
       }
 
       const isWriter = userEmail && userEmail === book.writerEmail;
+
+
+      if (book.status === "unpublished" && !isWriter) {
+        return res.status(403).send({ message: "This book is currently unavailable" });
+      }
+
       const isBuyer = userEmail && userEmail === book.buyerEmail;
       const isSold = book.status?.toLowerCase() === 'sold';
 
@@ -188,24 +277,24 @@ async function run() {
       res.send(book);
     });
 
-  //  for update 
-    // 📝 বইয়ের বিস্তারিত তথ্য আপডেট করার নতুন API রুট
-    app.patch("/api/books/update/:id", async (req, res) => {
+
+    //  for book update 
+    app.patch("/api/books/update/:id",verifyToken, writerVerify,  async (req, res) => {
       try {
         const id = req.params.id;
         const { title, description, genre, price, coverImage } = req.body;
 
         const query = { _id: new ObjectId(id) };
 
-        // ডাটাবেজে আপডেট করার অবজেক্ট তৈরি
+        
         const updateDoc = {
           $set: {
             title,
             description,
             genre,
-            price: parseFloat(price), // প্রাইজ যেন নম্বর বা ফ্লোট হিসেবে সেভ হয়
+            price: parseFloat(price), 
             coverImage,
-            updatedAt: new Date() // কখন আপডেট হলো তার ট্র্যাকিং রাখা
+            updatedAt: new Date() 
           }
         };
 
@@ -222,33 +311,34 @@ async function run() {
       }
     });
 
-    // publish or unpublish book
-    app.patch("/api/books/toggle-publish/:id", async (req, res) => {
+    // publish or unpublish book (Updated to match Frontend)
+    app.patch("/api/books/status/:id",  async (req, res) => {
       try {
         const id = req.params.id;
-        const { isPublished } = req.body;
+        const { status } = req.body;
 
         const query = { _id: new ObjectId(id) };
         const updateDoc = {
           $set: {
-            isPublished: isPublished
+            status: status
           }
         };
 
         const result = await bookCollection.updateOne(query, updateDoc);
 
-        if (result.modifiedCount === 0) {
-          return res.status(404).send({ message: "Book not found or no changes made" });
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ message: "Book not found" });
         }
 
-        res.send({ success: true, message: `Book status updated to ${isPublished ? 'Published' : 'Unpublished'}` });
+        res.send({ success: true, message: `Book status updated to ${status}` });
       } catch (error) {
-        console.error("Toggle Publish Error:", error);
+        console.error("Toggle Status Error:", error);
         res.status(500).send({ message: "Internal server error" });
       }
     });
 
-    // 🗑️ বই ডিলিট করার নতুন API রুট
+
+    // delete books
     app.delete("/api/books/delete/:id", async (req, res) => {
       try {
         const id = req.params.id;
@@ -266,6 +356,81 @@ async function run() {
         res.status(500).send({ success: false, message: "Internal server error" });
       }
     });
+
+    // delete books (Updated to match Frontend)
+    app.delete("/api/admin/books/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) };
+
+        const result = await bookCollection.deleteOne(query);
+
+        if (result.deletedCount === 0) {
+          return res.status(404).send({ success: false, message: "Ebook not found or already deleted" });
+        }
+
+        res.send({ success: true, message: "Ebook deleted successfully!", result });
+      } catch (error) {
+        console.error("Delete Ebook Error:", error);
+        res.status(500).send({ success: false, message: "Internal server error" });
+      }
+    });
+
+
+
+
+
+
+    // user delete 
+    app.delete("/api/admin/users/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) };
+
+        const result = await usersCollection.deleteOne(query);
+
+        if (result.deletedCount === 0) {
+          return res.status(404).send({ success: false, message: "User not found or already deleted" });
+        }
+
+        res.send({ success: true, message: "User deleted successfully!", result });
+      } catch (error) {
+        console.error("Delete User Error:", error);
+        res.status(500).send({ success: false, message: "Internal server error" });
+      }
+    });
+
+    app.patch("/api/admin/users/role/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const { role } = req.body;
+
+        const validRoles = ["user", "writer", "admin"];
+        if (!validRoles.includes(role)) {
+          return res.status(400).send({ success: false, message: "Invalid role specified" });
+        }
+
+        const query = { _id: new ObjectId(id) };
+        const updateDoc = {
+          $set: {
+            role: role,
+            updatedAt: new Date()
+          }
+        };
+
+        const result = await usersCollection.updateOne(query, updateDoc);
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ success: false, message: "User not found" });
+        }
+
+        res.send({ success: true, message: `User role updated to ${role} successfully!`, result });
+      } catch (error) {
+        console.error("Role Update Error:", error);
+        res.status(500).send({ success: false, message: "Internal server error" });
+      }
+    });
+
     // app.get("/api/books/:id", async (req, res) => {
     //   const id = req.params.id;
     //   const query = { _id: new ObjectId(id) }
@@ -274,14 +439,77 @@ async function run() {
     //   res.send(book)
     // })
 
-    app.get("/api/books", async (req, res) => {
-      const query = {};
-      if (req.query.writerId) {
-        query.writerId = req.query.writerId
+    // publish or unpublish book (Updated to match Frontend)
+
+
+    app.patch("/api/admin/books/status/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const { status } = req.body;
+
+        const query = { _id: new ObjectId(id) };
+        const updateDoc = {
+          $set: {
+            status: status
+          }
+        };
+
+        const result = await bookCollection.updateOne(query, updateDoc);
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ message: "Book not found" });
+        }
+
+        res.send({ success: true, message: `Book status updated to ${status}` });
+      } catch (error) {
+        console.error("Toggle Status Error:", error);
+        res.status(500).send({ message: "Internal server error" });
       }
-      const books = await bookCollection.find(query).toArray()
-      res.send(books)
-    })
+    });
+
+
+
+    app.get("/api/admin/analytics", async (req, res) => {
+      try {
+
+        const totalUsers = await usersCollection.countDocuments({ role: "user" });
+        const totalWriters = await usersCollection.countDocuments({ role: "writer" });
+        const totalEbooksSold = await bookCollection.countDocuments({ status: "sold" });
+
+        const readerPayments = await readerPaymentCollection.find().toArray();
+        const writerSubscriptions = await writersSubscriptionCollection.find().toArray();
+
+        const totalReaderRevenue = readerPayments.reduce((sum, item) => sum + Number(item.price || 0), 0);
+        const totalWriterRevenue = writerSubscriptions.reduce((sum, item) => sum + Number(item.price || 0), 0);
+        const totalRevenue = totalReaderRevenue + totalWriterRevenue;
+
+
+        const genreData = await bookCollection.aggregate([
+          { $group: { _id: "$genre", count: { $sum: 1 } } }
+        ]).toArray();
+
+
+        const monthlySalesData = await readerPaymentCollection.aggregate([
+          {
+            $group: {
+              _id: { $dateToString: { format: "%Y-%m", date: "$purchaseDate" } },
+              totalSales: { $sum: { $toDouble: "$price" } }
+            }
+          },
+          { $sort: { _id: 1 } }
+        ]).toArray();
+
+        res.send({
+          cards: { totalUsers, totalWriters, totalEbooksSold, totalRevenue },
+          genreChart: genreData.map(item => ({ genre: item._id || "Others", count: item.count })),
+          monthlySalesChart: monthlySalesData.map(item => ({ month: item._id, amount: item.totalSales }))
+        });
+
+      } catch (error) {
+        console.error("Analytics Endpoint Error:", error);
+        res.status(500).send({ message: "Internal server error" });
+      }
+    });
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
@@ -291,6 +519,7 @@ async function run() {
     // await client.close();
   }
 }
+
 run().catch(console.dir);
 
 

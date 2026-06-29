@@ -111,7 +111,7 @@ app.get("/api/bookmarks", verifyToken, authorizeRoles("writer", "reader"), async
 
 app.get("/api/features/books", async (req, res) => {
   const query = {};
-  const books = await bookCollection.find(query).limit(6).sort({ createdAt: -1 }).toArray();
+  const books = await bookCollection.find(query).limit(8).sort({ createdAt: -1 }).toArray();
   res.send(books);
 })
 
@@ -158,7 +158,7 @@ app.get("/api/writers/fee", verifyToken, authorizeRoles("admin"), async (req, re
 
 
 app.post("/api/subscription", async (req, res) => {
-  const { sessionId, writerId, priceId, writerName, writerEmail } = req.body;
+  const { sessionId, writerId, priceId, writerName, writerEmail,price } = req.body;
   const isExist = await writersSubscriptionCollection.findOne({ sessionId })
   if (isExist) {
     res.send({ message: "subscription already exist" })
@@ -372,7 +372,7 @@ app.delete("/api/books/delete/:id", verifyToken, writerVerify, async (req, res) 
 });
 
 // delete books (Updated to match Frontend)
-app.delete("/api/admin/books/:id", async (req, res) => {
+app.delete("/api/admin/books/:id",verifyToken, authorizeRoles("admin"), async (req, res) => {
   try {
     const id = req.params.id;
     const query = { _id: new ObjectId(id) };
